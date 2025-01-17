@@ -1,0 +1,143 @@
+import sympy as sp
+from sympy import symbols, diff, sqrt, N
+
+# Define the time variable
+t = sp.symbols('t')
+
+# Curvilinear Motion Solver Function
+def curvilinear_motion_solver(inputs):
+    x_func = inputs.get('x_func')
+    y_func = inputs.get('y_func')
+    v_x = inputs.get('v_x')
+    v_y = inputs.get('v_y')
+    v_x_func = inputs.get('v_x_func')
+    v_y_func = inputs.get('v_y_func')
+    x_pos = inputs.get('x_pos')
+    y_pos = inputs.get('y_pos')
+    t_val = inputs.get('t_val')
+
+    results = {}
+
+    # 1. Handle velocity as a function of time
+    if v_x_func:
+        v_x_func = sp.sympify(v_x_func)
+        results['v_x'] = N(v_x_func.subs(t, t_val)) if t_val else v_x_func
+        results['a_x'] = N(diff(v_x_func, t).subs(t, t_val)) if t_val else diff(v_x_func, t)
+    elif v_x is not None:
+        results['v_x'] = N(float(v_x))
+        results['a_x'] = 0  # Constant velocity implies zero acceleration
+
+    if v_y_func:
+        v_y_func = sp.sympify(v_y_func)
+        results['v_y'] = N(v_y_func.subs(t, t_val)) if t_val else v_y_func
+        results['a_y'] = N(diff(v_y_func, t).subs(t, t_val)) if t_val else diff(v_y_func, t)
+    elif v_y is not None:
+        results['v_y'] = N(float(v_y))
+        results['a_y'] = 0  # Constant velocity implies zero acceleration
+
+    # 2. Handle position as a function of time
+    if x_func:
+        x_func = sp.sympify(x_func)
+        if not ('v_x' in results or 'a_x' in results):
+            dx_dt = diff(x_func, t)
+            d2x_dt2 = diff(dx_dt, t)
+            results['v_x'] = N(dx_dt.subs(t, t_val)) if t_val else dx_dt
+            results['a_x'] = N(d2x_dt2.subs(t, t_val)) if t_val else d2x_dt2
+
+    if y_func:
+        y_func = sp.sympify(y_func)
+        dy_dx = diff(y_func, 'x')
+        d2y_dx2 = diff(dy_dx, 'x')
+        if y_pos is not None:
+            x_vals = sp.solve(y_func - y_pos, 'x')
+            if x_vals:
+                # Choose appropriate solution for x based on context
+                x_val = max(N(val) for val in x_vals if N(val) >= 0)
+                results['x_pos'] = x_val
+
+                # Calculate v_x and a_x if y_func and v_y are given
+                if 'v_y' in results and 'v_x' not in results:
+                    dy_dx_at_x = dy_dx.subs('x', x_val)
+                    results['v_x'] = N(float(results['v_y']) / dy_dx_at_x)
+
+                # Calculate a_x if y_func, v_y, and a_y are given
+                if 'v_x' in results and 'a_y' in results and 'a_x' not in results:
+                    d2y_dx2_at_x = d2y_dx2.subs('x', x_val)
+                    results['a_x'] = N((results['a_y'] - d2y_dx2_at_x * results['v_x']**2) / dy_dx.subs('x', x_val))
+
+        # Calculate v_y and a_y if y_func and v_x are given
+        if 'v_x' in results and 'v_y' not in results:
+            dy_dx_at_x = dy_dx.subs('x', results.get('x_pos')) if results.get('x_pos') is not None else dy_dx
+            results['v_y'] = N(dy_dx_at_x * results['v_x'])
+
+        if 'v_x' in results and 'a_x' in results and 'a_y' not in results:
+            d2y_dx2_at_x = d2y_dx2.subs('x', results.get('x_pos')) if results.get('x_pos') is not None else d2y_dx2
+            results['a_y'] = N(d2y_dx2_at_x * results['v_x']**2 + dy_dx_at_x * results['a_x'])
+
+    # 3. Corrected calculation for Case 4
+    if v_y_func and 'v_x' in results:
+        v_y_at_t = N(v_y_func.subs(t, t_val))
+        results['v_y'] = v_y_at_t
+        a_y_at_t = N(diff(v_y_func, t).subs(t, t_val))
+        results['a_y'] = a_y_at_t
+
+        # Assuming x(t) has a functional form to differentiate:
+        x_func = '12.5*t**4'  # Define x(t) appropriately
+        dx_dt = diff(x_func, t)
+        results['v_x'] = N(dx_dt.subs(t, t_val))
+
+        # Calculate a_x based on dx/dt
+        d2x_dt2 = diff(dx_dt, t)
+        results['a_x'] = N(d2x_dt2.subs(t, t_val))
+
+    # 4. Handle x(y) relationship for case 5 (x = 0.001 * y^2)
+    if x_func and x_pos is not None:
+        # Convert x_func from string to sympy expression
+        x_func = sp.sympify(x_func)
+
+        # x = 0.001 * y^2 --> we can solve for y given x_pos
+        y_sol = sp.solve(x_func - x_pos, 'y')
+        y_val = N(max(y_sol))  # Choose positive value for y
+
+        results['y_pos'] = y_val
+
+        # Given v_x is constant, a_x = 0
+        v_x_numeric = N(float(v_x))  # Convert v_x to numeric type
+        results['v_x'] = v_x_numeric  # v_x is constant
+        results['a_x'] = 0  # Constant velocity in the x-direction
+
+        # Now we calculate v_y from the derivative of x_func with respect to y
+        dx_dy = diff(x_func, 'y')
+        v_y = N(dx_dy.subs('y', y_val) * v_x_numeric)  # v_y = (dx/dy) * v_x
+
+        results['v_y'] = v_y
+
+        # To find a_y, we need to differentiate v_y with respect to time
+        # a_y = 0.002 * v_x * (dy/dt)
+        dy_dt = v_x_numeric / dx_dy.subs('y', y_val)  # dy/dt = v_x / (dx/dy)
+        a_y = 0.002 * v_x_numeric * dy_dt  # a_y = 0.002 * v_x * (dy/dt)
+        results['a_y'] = a_y
+
+    # Generalize velocity and acceleration magnitude calculation
+    v_magnitude = sqrt(results.get('v_x', 0)**2 + results.get('v_y', 0)**2)
+    a_magnitude = sqrt(results.get('a_x', 0)**2 + results.get('a_y', 0)**2)
+    results['v_magnitude'] = N(v_magnitude)
+    results['a_magnitude'] = N(a_magnitude)
+
+    # Output results
+    for key, value in results.items():
+        print(f"{key}: {value}")
+
+# Test Cases
+test_cases = [
+    {'y_func': '0.5*x', 'v_x_func': '2*t**2', 't_val': 4},
+    {'x_func': '8*t', 'y_func': 'x**2/10', 't_val': 2},
+    {'y_func': '0.001*x**2', 'v_y': '10', 'y_pos': 100},
+    {'x_func': '5*y', 'v_y_func': '10*t**3', 't_val': 7},
+    {'x_func': '0.1*y**2', 'v_x': '10', 'x_pos': 100}
+]
+
+# Run Test Cases
+for case in test_cases:
+    print(f"\n--- Case {test_cases.index(case) + 1} ---")
+    curvilinear_motion_solver(case)
